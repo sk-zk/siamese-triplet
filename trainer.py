@@ -16,6 +16,8 @@ def fit(train_loader, val_loader, model, loss_fn, optimizer, scheduler, n_epochs
     for epoch in range(0, start_epoch):
         scheduler.step()
 
+    best_val_loss = float("inf")
+
     for epoch in range(start_epoch, n_epochs):
         scheduler.step()
 
@@ -34,6 +36,12 @@ def fit(train_loader, val_loader, model, loss_fn, optimizer, scheduler, n_epochs
         for metric in metrics:
             message += '\t{}: {}'.format(metric.name(), metric.value())
 
+        torch.save(model, f"./last.pt")
+        if val_loss < best_val_loss:
+            print("New best")
+            best_val_loss = val_loss
+            torch.save(model.state_dict(), f"./best.pt")
+
         print(message)
 
 
@@ -46,7 +54,7 @@ def train_epoch(train_loader, model, loss_fn, optimizer, cuda, log_interval, met
     total_loss = 0
 
     for batch_idx, (data, target) in enumerate(train_loader):
-        target = target if len(target) > 0 else None
+        target = torch.tensor(target, dtype=torch.int) if len(target) > 0 else None
         if not type(data) in (tuple, list):
             data = (data,)
         if cuda:
@@ -54,9 +62,9 @@ def train_epoch(train_loader, model, loss_fn, optimizer, cuda, log_interval, met
             if target is not None:
                 target = target.cuda()
 
-
         optimizer.zero_grad()
         outputs = model(*data)
+        outputs = torch.squeeze(outputs)
 
         if type(outputs) not in (tuple, list):
             outputs = (outputs,)
@@ -96,6 +104,7 @@ def test_epoch(val_loader, model, loss_fn, cuda, metrics):
             metric.reset()
         model.eval()
         val_loss = 0
+
         for batch_idx, (data, target) in enumerate(val_loader):
             target = target if len(target) > 0 else None
             if not type(data) in (tuple, list):
@@ -106,6 +115,7 @@ def test_epoch(val_loader, model, loss_fn, cuda, metrics):
                     target = target.cuda()
 
             outputs = model(*data)
+            outputs = torch.squeeze(outputs)
 
             if type(outputs) not in (tuple, list):
                 outputs = (outputs,)
