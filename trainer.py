@@ -28,7 +28,7 @@ def fit(train_loader, val_loader, model, loss_fn, optimizer, scheduler, n_epochs
 
         message = 'Epoch: {}/{}. Train set: Average loss: {:.4f}'.format(epoch + 1, n_epochs, train_loss)
         for metric in metrics:
-            message += '\t{}: {}'.format(metric.name(), metric.value())
+            message += '\t{}: {:.4f}'.format(metric.name(), metric.value())
 
         val_loss, metrics = test_epoch(val_loader, model, loss_fn, cuda, metrics)
         val_loss /= len(val_loader)
