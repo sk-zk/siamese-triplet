@@ -41,8 +41,8 @@ def fit(train_loader, val_loader, model, loss_fn, optimizer, scheduler, n_epochs
 
         torch.save(model.state_dict(), f"./last.pt")
 
-        precisions, recalls = test_cosine_similarity(val_loader.dataset, model, cuda)
-        print_precision_recall(precisions, recalls)
+        precisions, recalls = eval_model(val_loader.dataset, model, cuda)
+        print_precision_and_recall(precisions, recalls)
         if precisions[0] > best_precision:
             print("New best")
             best_precision = precisions[0]
@@ -51,58 +51,48 @@ def fit(train_loader, val_loader, model, loss_fn, optimizer, scheduler, n_epochs
         print("")
 
 
-def print_precision_recall(precisions, recalls):
-    precision_msg = "Eval: "
-    recall_msg = "Eval: "
-    for i in range(0, len(precisions)):
-        precision_msg += f"P@{i+1}: {precisions[i]:.2%}  "
-        recall_msg += f"R@{i+1}: {recalls[i]:.2%}  "
-    print(precision_msg)
-    print(recall_msg)
-
-
-def test_cosine_similarity(dataset, model, cuda):
+def eval_model(dataset, model, cuda):
+    print("Eval: Calculating recall and precision ...")
     with torch.no_grad():
         model.eval()
-
-        print("Eval: Evaluating recall and precision ...")
-
-        embeddings, labels = get_embeddings(model, dataset, cuda)
-        scores = cosine_similarity(embeddings, embeddings)
-
-        # calculate precision@k and recall@k for k=1 to 5.
-        length = len(embeddings)
-        k_max = 5
-        k_vals = np.arange(1, k_max + 1)
-        precision_correct = np.zeros(k_max)
-        recall_scores = np.zeros(k_max)
-
-        for target_i in range(0, length):
-            target_label = labels[target_i]
-
-            # get the images with the highest cosine similarity.
-            # the first result is filtered out because it's just the query image again, with a similarity of 1.
-            similar_idx = np.argsort(scores[target_i])[-(k_max+1):-1][::-1]
-            similar = [(scores[target_i][x], labels[x]) for x in similar_idx]
-
-            # precision
-            for result_i in range(0, k_max):
-                if similar[result_i][1] == target_label:
-                    for k in range(result_i, k_max):
-                        precision_correct[k] += 1
-
-            # recall
-            similar_labels = [x[1] for x in similar]
-            for k in range(0, k_max):
-                if target_label in similar_labels[:k+1]:
-                    recall_scores[k] += 1
-
-        precisions = precision_correct / (k_vals * length)  # not sure if this is correct?
-        recalls = recall_scores / length
+        embeddings, labels = get_embeddings(model, dataset, cuda=cuda)
+        similarity_matrix = get_similarity_matrix(embeddings)
+        precisions, recalls = calculate_precision_and_recall(similarity_matrix, embeddings, labels)
         return precisions, recalls
 
 
-def get_embeddings(model, dataset, cuda):
+def calculate_precision_and_recall(similarity_matrix, embeddings, labels):
+    # calculate precision@k and recall@k for k=1 to 5.
+    length = len(embeddings)
+    k_max = 5
+    k_vals = np.arange(1, k_max + 1)
+    precision_correct = np.zeros(k_max)
+    recall_scores = np.zeros(k_max)
+    for target_i in range(0, length):
+        target_label = labels[target_i]
+
+        # get the images with the highest cosine similarity.
+        # the first result is filtered out because it's just the query image again, with a similarity of 1.
+        similar_idx = np.argsort(similarity_matrix[target_i])[-(k_max + 1):-1][::-1]
+        similar = [(similarity_matrix[target_i][x], labels[x]) for x in similar_idx]
+
+        # precision
+        for result_i in range(0, k_max):
+            if similar[result_i][1] == target_label:
+                for k in range(result_i, k_max):
+                    precision_correct[k] += 1
+
+        # recall
+        similar_labels = [x[1] for x in similar]
+        for k in range(0, k_max):
+            if target_label in similar_labels[:k + 1]:
+                recall_scores[k] += 1
+    precisions = precision_correct / (k_vals * length)  # not sure if this is correct?
+    recalls = recall_scores / length
+    return precisions, recalls
+
+
+def get_embeddings(model, dataset, cuda=True, ):
     with torch.no_grad():
         model.eval()
         embeddings = np.zeros((len(dataset), model.num_features))
@@ -116,6 +106,20 @@ def get_embeddings(model, dataset, cuda):
             labels[k:k + len(images)] = targets.numpy()
             k += len(images)
         return embeddings, labels
+
+
+def get_similarity_matrix(embeddings):
+    return cosine_similarity(embeddings, embeddings)
+
+
+def print_precision_and_recall(precisions, recalls):
+    precision_msg = "Eval: "
+    recall_msg = "Eval: "
+    for i in range(0, len(precisions)):
+        precision_msg += f"P@{i+1}: {precisions[i]:.2%}  "
+        recall_msg += f"R@{i+1}: {recalls[i]:.2%}  "
+    print(precision_msg)
+    print(recall_msg)
 
 
 def train_epoch(train_loader, model, loss_fn, optimizer, cuda, log_interval, metrics):
