@@ -85,14 +85,14 @@ def train(opt: Namespace):
     online_val_loader = torch.utils.data.DataLoader(val_dataset, batch_sampler=val_batch_sampler, **kwargs)
 
     # Set up the network and training parameters
-    margin = 1.
-    loss_fn = OnlineTripletLoss(margin, RandomNegativeTripletSelector(margin))
+    loss_fn = OnlineTripletLoss(opt.margin, RandomNegativeTripletSelector(opt.margin))
     optimizer = optim.Adam(model.parameters(), lr=opt.lr, weight_decay=1e-4)
     scheduler = lr_scheduler.StepLR(optimizer, 8, gamma=0.1, last_epoch=-1)
     log_interval = 100
+    metrics = [AverageNonzeroTripletsMetric()]
 
     fit(online_train_loader, online_val_loader, model, loss_fn, optimizer, scheduler, opt.epochs, cuda,
-        log_interval, metrics=[AverageNonzeroTripletsMetric()])
+        log_interval, metrics=metrics)
 
 
 def get_model(net: str):
@@ -105,11 +105,11 @@ def get_model(net: str):
 if __name__ == '__main__':
     parser = ArgumentParser(description='Triplet loss training')
     parser.add_argument('--data', type=str, help='Path to dataset')
-    parser.add_argument('--net', default='efficientnet_b1', type=str, help='Net to use')
-    parser.add_argument('--classes', default=8, type=int, help='Classes to sample per BalancedBatchSampler batch')
-    parser.add_argument('--samples', default=8, type=int, help='Images per class to sample per '
-                                                               'BalancedBatchSampler batch')
+    parser.add_argument('--net', default='efficientnet_b1', type=str, help='Network to use')
+    parser.add_argument('--classes', default=8, type=int, help='Classes to sample per batch')
+    parser.add_argument('--samples', default=8, type=int, help='Images per class to sample per batch')
     parser.add_argument('--lr', default=1e-4, type=int, help='Learning rate')
     parser.add_argument('--epochs', default=20, type=int, help='Number of epochs')
+    parser.add_argument('--margin', default=1, type=int, help='Triplet loss margin')
     opt = parser.parse_args()
     train(opt)
