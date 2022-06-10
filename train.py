@@ -71,7 +71,16 @@ class TripletDataset(Dataset):
 
 
 def train(opt: Namespace):
-    model = get_model(opt.net)
+    if opt.resume is not None:
+        checkpoint = torch.load(opt.resume)
+        print(f"Resuming from {opt.resume} ...")
+        model = get_model(checkpoint["model_name"])
+        model.load_state_dict(checkpoint['model_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+    else:
+        checkpoint = None
+        model = get_model(opt.net)
+        start_epoch = 0
     input_size = model.default_cfg["input_size"][1]
 
     train_dataset = TripletDataset(os.path.join(opt.data, "train"), input_size)
@@ -88,11 +97,14 @@ def train(opt: Namespace):
     loss_fn = OnlineTripletLoss(opt.margin, RandomNegativeTripletSelector(opt.margin))
     optimizer = optim.Adam(model.parameters(), lr=opt.lr, weight_decay=1e-4)
     scheduler = lr_scheduler.StepLR(optimizer, 8, gamma=0.1, last_epoch=-1)
+    if checkpoint is not None:
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
     log_interval = 100
     metrics = [AverageNonzeroTripletsMetric()]
 
     fit(online_train_loader, online_val_loader, model, loss_fn, optimizer, scheduler, opt.epochs, cuda,
-        log_interval, metrics=metrics)
+        log_interval, metrics=metrics, start_epoch=start_epoch)
 
 
 def get_model(net: str):
@@ -111,5 +123,6 @@ if __name__ == '__main__':
     parser.add_argument('--lr', default=1e-4, type=int, help='Learning rate')
     parser.add_argument('--epochs', default=20, type=int, help='Number of epochs')
     parser.add_argument('--margin', default=1, type=int, help='Triplet loss margin')
+    parser.add_argument('--resume', type=str, help="Resume training with these weights")
     opt = parser.parse_args()
     train(opt)

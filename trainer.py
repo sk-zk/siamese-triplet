@@ -15,8 +15,8 @@ def fit(train_loader, val_loader, model, loss_fn, optimizer, scheduler, n_epochs
     Siamese network: Siamese loader, siamese model, contrastive loss
     Online triplet learning: batch loader, embedding model, online triplet loss
     """
-    for epoch in range(0, start_epoch):
-        scheduler.step()
+    # for epoch in range(0, start_epoch):
+    #     scheduler.step()
 
     best_precision = float("-inf")
 
@@ -39,7 +39,13 @@ def fit(train_loader, val_loader, model, loss_fn, optimizer, scheduler, n_epochs
             message += '\t{}: {:.4f}'.format(metric.name(), metric.value())
         print(message)
 
-        torch.save(model.state_dict(), f"./last.pt")
+        torch.save({
+            'epoch': epoch,
+            'model_name': model.default_cfg["architecture"],
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
+        }, f"./last.pt")
 
         precisions, recalls = eval_model(val_loader.dataset, model, cuda)
         print_precision_and_recall(precisions, recalls)
@@ -92,7 +98,7 @@ def calculate_precision_and_recall(similarity_matrix, embeddings, labels):
     return precisions, recalls
 
 
-def get_embeddings(model, dataset, cuda=True, ):
+def get_embeddings(model, dataset, cuda=True):
     with torch.no_grad():
         model.eval()
         embeddings = np.zeros((len(dataset), model.num_features))
