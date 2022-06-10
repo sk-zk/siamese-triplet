@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from torch.utils.data import DataLoader
+import time
 
 
 def fit(train_loader, val_loader, model, loss_fn, optimizer, scheduler, n_epochs, cuda, log_interval, metrics=[],
@@ -61,9 +62,19 @@ def eval_model(dataset, model, cuda, inference_batch_size):
     print("Eval: Calculating recall and precision ...")
     with torch.no_grad():
         model.eval()
+
+        start = time.time()
         embeddings, labels = get_embeddings(model, dataset, inference_batch_size, cuda=cuda)
+        print(f"Embeddings: {time.time() - start:.4f}s")
+
+        start = time.time()
         similarity_matrix = get_similarity_matrix(embeddings)
+        print(f"Matrix: {time.time() - start:.4f}s")
+
+        start = time.time()
         precisions, recalls = calculate_precision_and_recall(similarity_matrix, embeddings, labels)
+        print(f"Metrics: {time.time() - start:.4f}s")
+
         return precisions, recalls
 
 
