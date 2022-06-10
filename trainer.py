@@ -5,8 +5,8 @@ from torch.utils.data import DataLoader
 import time
 
 
-def fit(train_loader, val_loader, model, loss_fn, optimizer, scheduler, n_epochs, cuda, log_interval, metrics=[],
-        start_epoch=0):
+def fit(train_loader, val_loader, model, loss_fn, optimizer, scheduler, scaler, n_epochs, cuda, log_interval,
+        metrics=[], start_epoch=0):
     """
     Loaders, model, loss function and metrics should work together for a given task,
     i.e. The model should be able to process data output of loaders,
@@ -25,19 +25,22 @@ def fit(train_loader, val_loader, model, loss_fn, optimizer, scheduler, n_epochs
         scheduler.step()
 
         # Train stage
-        train_loss, metrics = train_epoch(train_loader, model, loss_fn, optimizer, cuda, log_interval, metrics)
-
+        start = time.time()
+        train_loss, metrics = train_epoch(train_loader, model, loss_fn, optimizer, cuda, log_interval, metrics, scaler)
         message = 'Epoch: {}/{}. Train set: Average loss: {:.4f}'.format(epoch + 1, n_epochs, train_loss)
         for metric in metrics:
             message += '\t{}: {:.4f}'.format(metric.name(), metric.value())
+        print(f"epoch took {time.time() - start:.4f}s")
 
-        val_loss, metrics = test_epoch(val_loader, model, loss_fn, cuda, metrics)
+        start = time.time()
+        val_loss, metrics = test_epoch(val_loader, model, loss_fn, cuda, metrics,
+                                       use_amp=scaler.is_enabled())
         val_loss /= len(val_loader)
-
         message += '\nEpoch: {}/{}. Validation set: Average loss: {:.4f}'.format(epoch + 1, n_epochs,
                                                                                  val_loss)
         for metric in metrics:
             message += '\t{}: {:.4f}'.format(metric.name(), metric.value())
+        print(f"val took {time.time() - start:.4f}s")
         print(message)
 
         torch.save({
@@ -46,9 +49,11 @@ def fit(train_loader, val_loader, model, loss_fn, optimizer, scheduler, n_epochs
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'scheduler_state_dict': scheduler.state_dict(),
+            'scaler_state_dict': scaler.state_dict(),
         }, f"./last.pt")
 
-        precisions, recalls = eval_model(val_loader.dataset, model, cuda, val_loader.batch_sampler.batch_size)
+        precisions, recalls = eval_model(val_loader.dataset, model, cuda, val_loader.batch_sampler.batch_size,
+                                         use_amp=scaler.is_enabled())
         print_precision_and_recall(precisions, recalls)
         if precisions[0] > best_precision:
             print("New best")
@@ -58,13 +63,13 @@ def fit(train_loader, val_loader, model, loss_fn, optimizer, scheduler, n_epochs
         print("")
 
 
-def eval_model(dataset, model, cuda, inference_batch_size):
+def eval_model(dataset, model, cuda, inference_batch_size, use_amp=False):
     print("Eval: Calculating recall and precision ...")
     with torch.no_grad():
         model.eval()
 
         start = time.time()
-        embeddings, labels = get_embeddings(model, dataset, inference_batch_size, cuda=cuda)
+        embeddings, labels = get_embeddings(model, dataset, inference_batch_size, cuda=cuda, use_amp=use_amp)
         print(f"Embeddings: {time.time() - start:.4f}s")
 
         start = time.time()
@@ -109,7 +114,7 @@ def calculate_precision_and_recall(similarity_matrix, embeddings, labels):
     return precisions, recalls
 
 
-def get_embeddings(model, dataset, inference_batch_size, cuda=True):
+def get_embeddings(model, dataset, inference_batch_size, cuda=True, use_amp=False):
     with torch.no_grad():
         model.eval()
         embeddings = np.zeros((len(dataset), model.num_features))
@@ -119,7 +124,8 @@ def get_embeddings(model, dataset, inference_batch_size, cuda=True):
         for images, targets in loader:
             if cuda:
                 images = images.cuda()
-            embeddings[k:k + len(images)] = model(images).squeeze().data.cpu().numpy()
+            with torch.cuda.amp.autocast(enabled=use_amp):
+                embeddings[k:k + len(images)] = model(images).squeeze().data.cpu().numpy()
             labels[k:k + len(images)] = targets.numpy()
             k += len(images)
         return embeddings, labels
@@ -139,7 +145,7 @@ def print_precision_and_recall(precisions, recalls):
     print(recall_msg)
 
 
-def train_epoch(train_loader, model, loss_fn, optimizer, cuda, log_interval, metrics):
+def train_epoch(train_loader, model, loss_fn, optimizer, cuda, log_interval, metrics, scaler):
     for metric in metrics:
         metric.reset()
 
@@ -157,23 +163,27 @@ def train_epoch(train_loader, model, loss_fn, optimizer, cuda, log_interval, met
                 target = target.cuda()
 
         optimizer.zero_grad()
-        outputs = model(*data)
-        outputs = torch.squeeze(outputs)
 
-        if type(outputs) not in (tuple, list):
-            outputs = (outputs,)
+        with torch.cuda.amp.autocast(enabled=scaler.is_enabled()):
+            outputs = model(*data)
+            outputs = torch.squeeze(outputs)
 
-        loss_inputs = outputs
-        if target is not None:
-            target = (target,)
-            loss_inputs += target
+            if type(outputs) not in (tuple, list):
+                outputs = (outputs,)
 
-        loss_outputs = loss_fn(*loss_inputs)
-        loss = loss_outputs[0] if type(loss_outputs) in (tuple, list) else loss_outputs
+            loss_inputs = outputs
+            if target is not None:
+                target = (target,)
+                loss_inputs += target
+
+            loss_outputs = loss_fn(*loss_inputs)
+            loss = loss_outputs[0] if type(loss_outputs) in (tuple, list) else loss_outputs
+
         losses.append(loss.item())
         total_loss += loss.item()
-        loss.backward()
-        optimizer.step()
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
 
         for metric in metrics:
             metric(outputs, target, loss_outputs)
@@ -192,7 +202,7 @@ def train_epoch(train_loader, model, loss_fn, optimizer, cuda, log_interval, met
     return total_loss, metrics
 
 
-def test_epoch(val_loader, model, loss_fn, cuda, metrics):
+def test_epoch(val_loader, model, loss_fn, cuda, metrics, use_amp=False):
     with torch.no_grad():
         for metric in metrics:
             metric.reset()
@@ -208,7 +218,8 @@ def test_epoch(val_loader, model, loss_fn, cuda, metrics):
                 if target is not None:
                     target = target.cuda()
 
-            outputs = model(*data)
+            with torch.cuda.amp.autocast(enabled=use_amp):
+                outputs = model(*data)
             outputs = torch.squeeze(outputs)
 
             if type(outputs) not in (tuple, list):

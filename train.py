@@ -97,13 +97,16 @@ def train(opt: Namespace):
     loss_fn = OnlineTripletLoss(opt.margin, RandomNegativeTripletSelector(opt.margin))
     optimizer = optim.Adam(model.parameters(), lr=opt.lr, weight_decay=1e-4)
     scheduler = lr_scheduler.StepLR(optimizer, 8, gamma=0.1, last_epoch=-1)
+    scaler = torch.cuda.amp.GradScaler(enabled=opt.amp)
     if checkpoint is not None:
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        if 'scaler_state_dict' in checkpoint:
+            scaler.load_state_dict(checkpoint['scaler_state_dict'])
     log_interval = 100
     metrics = [AverageNonzeroTripletsMetric()]
 
-    fit(online_train_loader, online_val_loader, model, loss_fn, optimizer, scheduler, opt.epochs, cuda,
+    fit(online_train_loader, online_val_loader, model, loss_fn, optimizer, scheduler, scaler, opt.epochs, cuda,
         log_interval, metrics=metrics, start_epoch=start_epoch)
 
 
@@ -124,5 +127,8 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', default=20, type=int, help='Number of epochs')
     parser.add_argument('--margin', default=1, type=int, help='Triplet loss margin')
     parser.add_argument('--resume', type=str, help="Resume training with these weights")
+    parser.add_argument('--amp', action="store_true", help="Train with automatic mixed precision")
     opt = parser.parse_args()
+    if __debug__:
+        print(opt)
     train(opt)
