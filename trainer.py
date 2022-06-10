@@ -47,7 +47,7 @@ def fit(train_loader, val_loader, model, loss_fn, optimizer, scheduler, n_epochs
             'scheduler_state_dict': scheduler.state_dict(),
         }, f"./last.pt")
 
-        precisions, recalls = eval_model(val_loader.dataset, model, cuda)
+        precisions, recalls = eval_model(val_loader.dataset, model, cuda, val_loader.batch_sampler.batch_size)
         print_precision_and_recall(precisions, recalls)
         if precisions[0] > best_precision:
             print("New best")
@@ -57,11 +57,11 @@ def fit(train_loader, val_loader, model, loss_fn, optimizer, scheduler, n_epochs
         print("")
 
 
-def eval_model(dataset, model, cuda):
+def eval_model(dataset, model, cuda, inference_batch_size):
     print("Eval: Calculating recall and precision ...")
     with torch.no_grad():
         model.eval()
-        embeddings, labels = get_embeddings(model, dataset, cuda=cuda)
+        embeddings, labels = get_embeddings(model, dataset, inference_batch_size, cuda=cuda)
         similarity_matrix = get_similarity_matrix(embeddings)
         precisions, recalls = calculate_precision_and_recall(similarity_matrix, embeddings, labels)
         return precisions, recalls
@@ -98,13 +98,13 @@ def calculate_precision_and_recall(similarity_matrix, embeddings, labels):
     return precisions, recalls
 
 
-def get_embeddings(model, dataset, cuda=True):
+def get_embeddings(model, dataset, inference_batch_size, cuda=True):
     with torch.no_grad():
         model.eval()
         embeddings = np.zeros((len(dataset), model.num_features))
         labels = np.zeros(len(dataset))
         k = 0
-        loader = DataLoader(dataset, batch_size=16, shuffle=False)
+        loader = DataLoader(dataset, batch_size=inference_batch_size, shuffle=False)
         for images, targets in loader:
             if cuda:
                 images = images.cuda()
